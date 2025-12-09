@@ -1,0 +1,10 @@
+torch>=2.0
+transformers>=4.36
+accelerate
+pymupdf>=1.23
+pydantic>=2.0
+llama-index-core>=0.10
+llama-index-embeddings-huggingface
+sentence-transformers>=2.2.0
+Pillow
+
