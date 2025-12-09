@@ -28,7 +28,11 @@ class TableColumnExtractor:
             granite_vision_path="/path/to/granite-vision-3.3-2b",
         )
         
-        result = extractor.extract("Temperature", "/path/to/pdfs")
+        result = extractor.extract(
+            table_description="stress vs strain data",
+            column_name="strain",
+            pdf_directory="/path/to/pdfs",
+        )
         print(result.values)  # [100, 200, 300, ...]
     """
     
@@ -52,17 +56,21 @@ class TableColumnExtractor:
     
     def extract(
         self,
-        query: str,
+        table_description: str,
+        column_name: str,
         pdf_directory: str,
         top_k_text: int = 5,
         top_k_vision: int = 3,
         dpi: int = 150,
     ) -> ExtractionResponse:
         """
-        Extract numeric values from a specified column across PDFs.
+        Extract numeric values from a specified column in matching tables.
         
         Args:
-            query: Column name to extract (e.g., "Temperature", "Pressure")
+            table_description: Description of the table to find 
+                               (e.g., "stress vs strain data", "temperature readings")
+            column_name: Name of the column to extract values from
+                         (e.g., "strain", "y", "temperature")
             pdf_directory: Directory containing PDF files
             top_k_text: Number of tables to select via text similarity (default 5)
             top_k_vision: Number of images to select via vision similarity (default 3)
@@ -80,11 +88,17 @@ class TableColumnExtractor:
             all_tables.extend(tables)
         
         if not all_tables:
-            return ExtractionResponse(query=query, values=[], source_pages=[])
+            return ExtractionResponse(
+                table_description=table_description,
+                column_name=column_name,
+                values=[],
+                source_pages=[],
+            )
         
-        # Step 2: Embed query and table texts, find top 5
+        # Step 2: Embed table description and table texts, find top 5
+        # Use table_description for semantic search (finding the right tables)
         table_texts = [t.text_content for t in all_tables]
-        query_embedding = self.text_embedder.embed_single(query)
+        query_embedding = self.text_embedder.embed_single(table_description)
         table_embeddings = self.text_embedder.embed(table_texts)
         
         text_similarities = compute_similarity(query_embedding, table_embeddings)
@@ -111,9 +125,10 @@ class TableColumnExtractor:
             })
         
         # Step 4: Use vision embeddings to select top 3
+        # Use table_description for vision similarity too
         if len(images) > top_k_vision:
             image_embeddings = self.vision_embedder.embed_images(images)
-            query_vision_embedding = self.vision_embedder.embed_text(query)
+            query_vision_embedding = self.vision_embedder.embed_text(table_description)
             
             vision_similarities = compute_similarity(query_vision_embedding, image_embeddings)
             top_vision_indices = vision_similarities.argsort(descending=True)[:top_k_vision].tolist()
@@ -125,11 +140,16 @@ class TableColumnExtractor:
             selected_page_info = page_info
         
         # Step 5: Extract column values with Granite Vision
-        result = self.vision_extractor.extract_column_values(selected_images, query)
+        # Pass both table_description and column_name for accurate extraction
+        result = self.vision_extractor.extract_column_values(
+            selected_images,
+            table_description=table_description,
+            column_name=column_name,
+        )
         
         return ExtractionResponse(
-            query=query,
+            table_description=table_description,
+            column_name=column_name,
             values=result.values,
             source_pages=selected_page_info,
         )
-

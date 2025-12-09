@@ -12,13 +12,14 @@ class ColumnValues(BaseModel):
 
 class ExtractionRequest(BaseModel):
     """Request to extract column values from PDFs."""
-    query: str  # Must specify the column name to extract
-    pdf_directory: str  # Directory containing PDF files
+    table_description: str  # Description of the table to find (e.g., "stress vs strain data")
+    column_name: str        # Column to extract (e.g., "strain", "y")
+    pdf_directory: str      # Directory containing PDF files
     
 
 class ExtractionResponse(BaseModel):
     """Response containing extracted column values."""
-    query: str
+    table_description: str
+    column_name: str
     values: list[int]
     source_pages: list[dict]  # Info about which pages the values came from
-

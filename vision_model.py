@@ -91,30 +91,39 @@ class GraniteVisionExtractor:
     def extract_column_values(
         self,
         images: list[Image.Image],
+        table_description: str,
         column_name: str,
     ) -> ColumnValues:
         """
-        Extract numeric values from a specified column across table images.
+        Extract numeric values from a specified column in matching tables.
         
         Args:
             images: List of PIL Images containing tables
+            table_description: Description of the table to look for
+                               (e.g., "stress vs strain data")
             column_name: Name of the column to extract values from
+                         (e.g., "strain", "y")
             
         Returns:
             ColumnValues with list of integers
         """
-        prompt = f"""You are analyzing table images. Your task is to find the column named "{column_name}" and extract all numeric values from that column.
+        prompt = f"""You are analyzing table images to extract specific data.
+
+TASK:
+1. Find the table that contains "{table_description}"
+2. In that table, locate the column named "{column_name}" (or similar: y-values, {column_name} values, etc.)
+3. Extract ALL numeric values from that column
 
 CRITICAL INSTRUCTIONS:
-1. Look at ALL provided images
-2. Find any table that contains a column called "{column_name}" (exact or close match)
-3. Extract ONLY the numeric values from that column
-4. Return ONLY a JSON object in this exact format, nothing else:
+- Look at ALL provided images
+- The table may have headers like "{column_name}", "y", "{column_name} (units)", etc.
+- Extract ONLY numeric values from the target column
+- If decimals exist, round to integers
+- Return ONLY a JSON object in this exact format:
 
 {{"values": [integer1, integer2, integer3, ...]}}
 
-If the column contains decimal numbers, round them to integers.
-If no matching column is found, return: {{"values": []}}
+If no matching table or column is found, return: {{"values": []}}
 
 RESPOND WITH ONLY THE JSON OBJECT. NO OTHER TEXT."""
 
@@ -144,4 +153,3 @@ RESPOND WITH ONLY THE JSON OBJECT. NO OTHER TEXT."""
             return ColumnValues(values=[int(float(n)) for n in numbers])
         
         return ColumnValues(values=[])
-
