@@ -7,14 +7,26 @@ Pipeline:
 3. Convert those pages to images
 4. Use vision embeddings to select top 3 images
 5. Send to Granite Vision for column extraction
+  
+Note: Models are loaded sequentially to fit on limited GPU memory (e.g., 8GB).
+Each model is loaded, used, then unloaded before the next one.
 """
 
 from pathlib import Path
+
+import torch
 
 from .pdf_utils import extract_tables_from_pdf, page_to_image, get_all_pdfs, TableInfo
 from .embeddings import TextEmbedder, VisionEmbedder, compute_similarity
 from .vision_model import GraniteVisionExtractor
 from .models import ColumnValues, ExtractionResponse
+
+
+def _clear_gpu_memory():
+    """Free GPU memory after unloading a model."""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
 
 class TableColumnExtractor:
@@ -24,7 +36,7 @@ class TableColumnExtractor:
     Example:
         extractor = TableColumnExtractor(
             text_embedding_path="/path/to/granite-embedding",
-            vision_embedding_path="/path/to/clip-model",
+            vision_embedding_path="/path/to/granite-vision-embedding",
             granite_vision_path="/path/to/granite-vision-3.3-2b",
         )
         
@@ -45,14 +57,22 @@ class TableColumnExtractor:
         """
         Initialize the extractor with model paths.
         
+        Text embedding model is loaded immediately (small, ~1-2GB).
+        Larger models (vision embedding, VLM) are loaded on-demand.
+        
         Args:
             text_embedding_path: Path to Granite text embedding model
-            vision_embedding_path: Path to vision embedding model (CLIP/SigLIP)
-            granite_vision_path: Path to Granite Vision 3.3 2B model
+            vision_embedding_path: Path to Granite Vision Embedding model
+            granite_vision_path: Path to Granite Vision 3.3 2B model (VLM)
         """
+        # Load text embedder once (small model, keep in memory)
+        print("Loading text embedding model...")
         self.text_embedder = TextEmbedder(text_embedding_path)
-        self.vision_embedder = VisionEmbedder(vision_embedding_path)
-        self.vision_extractor = GraniteVisionExtractor(granite_vision_path)
+        print("Text embedding model loaded.")
+        
+        # Store paths for larger models (loaded on-demand)
+        self.vision_embedding_path = vision_embedding_path
+        self.granite_vision_path = granite_vision_path
     
     def extract(
         self,
@@ -79,7 +99,7 @@ class TableColumnExtractor:
         Returns:
             ExtractionResponse with extracted values and source info
         """
-        # Step 1: Extract all tables from PDFs
+        # Step 1: Extract all tables from PDFs (no model needed)
         pdf_files = get_all_pdfs(pdf_directory)
         all_tables: list[TableInfo] = []
         
@@ -95,8 +115,7 @@ class TableColumnExtractor:
                 source_pages=[],
             )
         
-        # Step 2: Embed table description and table texts, find top 5
-        # Use table_description for semantic search (finding the right tables)
+        # Step 2: Use text embedder to find top tables (already loaded in __init__)
         table_texts = [t.text_content for t in all_tables]
         query_embedding = self.text_embedder.embed_single(table_description)
         table_embeddings = self.text_embedder.embed(table_texts)
@@ -105,7 +124,7 @@ class TableColumnExtractor:
         top_text_indices = text_similarities.argsort(descending=True)[:top_k_text].tolist()
         top_tables = [all_tables[i] for i in top_text_indices]
         
-        # Step 3: Convert pages to images (deduplicate by page)
+        # Step 3: Convert pages to images (no model needed)
         page_keys = set()
         unique_pages = []
         for table in top_tables:
@@ -124,28 +143,42 @@ class TableColumnExtractor:
                 "page": table.page_num,
             })
         
-        # Step 4: Use vision embeddings to select top 3
-        # Use table_description for vision similarity too
+        # Step 4: Load vision embedder, select top images, then unload
         if len(images) > top_k_vision:
-            image_embeddings = self.vision_embedder.embed_images(images)
-            query_vision_embedding = self.vision_embedder.embed_text(table_description)
+            print("Loading vision embedding model...")
+            vision_embedder = VisionEmbedder(self.vision_embedding_path)
+            
+            image_embeddings = vision_embedder.embed_images(images)
+            query_vision_embedding = vision_embedder.embed_text(table_description)
             
             vision_similarities = compute_similarity(query_vision_embedding, image_embeddings)
             top_vision_indices = vision_similarities.argsort(descending=True)[:top_k_vision].tolist()
             
             selected_images = [images[i] for i in top_vision_indices]
             selected_page_info = [page_info[i] for i in top_vision_indices]
+            
+            # Unload vision embedder
+            del vision_embedder
+            _clear_gpu_memory()
+            print("Vision embedding model unloaded.")
         else:
             selected_images = images
             selected_page_info = page_info
         
-        # Step 5: Extract column values with Granite Vision
-        # Pass both table_description and column_name for accurate extraction
-        result = self.vision_extractor.extract_column_values(
+        # Step 5: Load VLM, extract column values, then unload
+        print("Loading Granite Vision VLM...")
+        vision_extractor = GraniteVisionExtractor(self.granite_vision_path)
+        
+        result = vision_extractor.extract_column_values(
             selected_images,
             table_description=table_description,
             column_name=column_name,
         )
+        
+        # Unload VLM
+        del vision_extractor
+        _clear_gpu_memory()
+        print("Granite Vision VLM unloaded.")
         
         return ExtractionResponse(
             table_description=table_description,
