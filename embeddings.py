@@ -47,39 +47,34 @@ class VisionEmbedder:
         Args:
             model_path: Local path to the Granite Vision Embedding model
         """
-        import sys
-        
         print(f"[DEBUG] Starting VisionEmbedder init...", flush=True)
         print(f"[DEBUG] GPU available: {torch.cuda.is_available()}", flush=True)
+        
+        # Load to CPU first (avoids accelerate device_map issues)
+        print(f"[DEBUG] Loading model to CPU first...", flush=True)
+        self.model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            device_map=None,  # Don't use accelerate, load to CPU
+            low_cpu_mem_usage=True,
+        )
+        print(f"[DEBUG] Model loaded to CPU!", flush=True)
+        print(f"[DEBUG] Model dtype: {next(self.model.parameters()).dtype}", flush=True)
+        
+        # Now move to GPU
         if torch.cuda.is_available():
-            print(f"[DEBUG] GPU memory before loading: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
-            print(f"[DEBUG] GPU total memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB", flush=True)
-        
-        print(f"[DEBUG] Loading model from: {model_path}", flush=True)
-        print(f"[DEBUG] Calling AutoModel.from_pretrained...", flush=True)
-        sys.stdout.flush()
-        
-        try:
-            self.model = AutoModel.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                low_cpu_mem_usage=True,
-            )
-            print(f"[DEBUG] Model loaded successfully!", flush=True)
-        except Exception as e:
-            print(f"[DEBUG] Error during model loading: {e}", flush=True)
-            raise
+            print(f"[DEBUG] Moving model to GPU...", flush=True)
+            print(f"[DEBUG] GPU memory before move: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
+            self.model = self.model.cuda()
+            print(f"[DEBUG] GPU memory after move: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
         
         self.model.eval()
-        
-        print(f"[DEBUG] GPU memory after model load: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
-        print(f"[DEBUG] Model dtype: {next(self.model.parameters()).dtype}", flush=True)
-        print(f"[DEBUG] Model device: {next(self.model.parameters()).device}", flush=True)
+        self.device = next(self.model.parameters()).device
+        print(f"[DEBUG] Model device: {self.device}", flush=True)
         
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-        print(f"[DEBUG] Processor loaded successfully!", flush=True)
+        print(f"[DEBUG] VisionEmbedder ready!", flush=True)
     
     def embed_images(self, images: list[Image.Image]) -> torch.Tensor:
         """
@@ -98,10 +93,10 @@ class VisionEmbedder:
                 print(f"[DEBUG] GPU memory before processing: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
                 
                 inputs = self.processor(images=img, return_tensors="pt")
-                print(f"[DEBUG] Input shapes: {[(k, v.shape) for k, v in inputs.items()]}")
+                print(f"[DEBUG] Input shapes: {[(k, v.shape) for k, v in inputs.items()]}", flush=True)
                 
                 # Move inputs to model's device
-                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 
                 print(f"[DEBUG] Running forward pass...")
                 outputs = self.model(**inputs)
@@ -122,7 +117,7 @@ class VisionEmbedder:
         """
         with torch.no_grad():
             inputs = self.processor(text=text, return_tensors="pt")
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             outputs = self.model(**inputs)
             return outputs.pooler_output.squeeze(0).cpu()
 
