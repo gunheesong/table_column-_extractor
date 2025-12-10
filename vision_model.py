@@ -57,11 +57,22 @@ class GraniteVisionExtractor:
         self.device = next(self.model.parameters()).device
         print(f"[VLM] Model ready on {self.device}", flush=True)
     
+    def _resize_image(self, img: Image.Image, max_size: int = 768) -> Image.Image:
+        """Resize image to fit within max_size while preserving aspect ratio."""
+        if max(img.size) > max_size:
+            img = img.copy()
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        return img
+    
     def _generate(self, images: list[Image.Image], prompt: str) -> str:
         """Generate response from model with multiple images."""
+        # Resize images to prevent OOM (large PDFs can cause 38GB+ allocations)
+        resized_images = [self._resize_image(img) for img in images]
+        print(f"[VLM] Image sizes after resize: {[img.size for img in resized_images]}", flush=True)
+        
         # Build conversation with multiple images
         content = []
-        for img in images:
+        for img in resized_images:
             content.append({"type": "image", "image": img})
         content.append({"type": "text", "text": prompt})
         
@@ -73,7 +84,7 @@ class GraniteVisionExtractor:
         )
         
         inputs = self.processor(
-            images=images,
+            images=resized_images,
             text=formatted_prompt,
             return_tensors="pt"
         )
