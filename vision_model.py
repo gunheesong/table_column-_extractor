@@ -40,21 +40,17 @@ class GraniteVisionExtractor:
         
         self.processor = AutoProcessor.from_pretrained(model_path)
         
-        # Load to CPU first, then move to GPU (avoids accelerate device_map issues)
-        print("[VLM] Loading model to CPU...", flush=True)
+        print("[VLM] Loading model...", flush=True)
         self.model = AutoModelForVision2Seq.from_pretrained(
             model_path,
             torch_dtype=torch_dtype,
-            device_map=None,  # Load to CPU first
+            device_map="auto",
             low_cpu_mem_usage=True,
         )
         
-        if torch.cuda.is_available():
-            print("[VLM] Moving model to GPU...", flush=True)
-            self.model = self.model.cuda()
-            print(f"[VLM] GPU memory used: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
-        
         self.device = next(self.model.parameters()).device
+        if torch.cuda.is_available():
+            print(f"[VLM] GPU memory used: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
         print(f"[VLM] Model ready on {self.device}", flush=True)
     
     def _resize_image(self, img: Image.Image, max_size: int = 1024) -> Image.Image:
