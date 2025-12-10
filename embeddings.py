@@ -54,7 +54,6 @@ class VisionEmbedder:
         print(f"[DEBUG] Loading model to CPU first...", flush=True)
         self.model = AutoModel.from_pretrained(
             model_path,
-            trust_remote_code=True,
             torch_dtype=torch.bfloat16,
             device_map=None,  # Don't use accelerate, load to CPU
             low_cpu_mem_usage=True,
@@ -73,7 +72,7 @@ class VisionEmbedder:
         self.device = next(self.model.parameters()).device
         print(f"[DEBUG] Model device: {self.device}", flush=True)
         
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(model_path)
         print(f"[DEBUG] VisionEmbedder ready!", flush=True)
     
     def embed_images(self, images: list[Image.Image]) -> torch.Tensor:

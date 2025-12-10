@@ -39,12 +39,23 @@ class GraniteVisionExtractor:
         self.max_new_tokens = max_new_tokens
         
         self.processor = AutoProcessor.from_pretrained(model_path)
+        
+        # Load to CPU first, then move to GPU (avoids accelerate device_map issues)
+        print("[VLM] Loading model to CPU...", flush=True)
         self.model = AutoModelForVision2Seq.from_pretrained(
             model_path,
             torch_dtype=torch_dtype,
-            device_map="auto",
+            device_map=None,  # Load to CPU first
             low_cpu_mem_usage=True,
         )
+        
+        if torch.cuda.is_available():
+            print("[VLM] Moving model to GPU...", flush=True)
+            self.model = self.model.cuda()
+            print(f"[VLM] GPU memory used: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
+        
+        self.device = next(self.model.parameters()).device
+        print(f"[VLM] Model ready on {self.device}", flush=True)
     
     def _generate(self, images: list[Image.Image], prompt: str) -> str:
         """Generate response from model with multiple images."""
@@ -71,9 +82,9 @@ class GraniteVisionExtractor:
         processed = {}
         for k, v in inputs.items():
             if torch.is_floating_point(v):
-                processed[k] = v.to(self.model.device, dtype=self.torch_dtype)
+                processed[k] = v.to(self.device, dtype=self.torch_dtype)
             else:
-                processed[k] = v.to(self.model.device)
+                processed[k] = v.to(self.device)
         
         with torch.no_grad():
             outputs = self.model.generate(
