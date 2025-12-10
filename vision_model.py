@@ -62,9 +62,12 @@ class GraniteVisionExtractor:
     
     def _generate(self, images: list[Image.Image], prompt: str) -> str:
         """Generate response from model with multiple images."""
+        import time
+        
         # Resize images to prevent OOM (large PDFs can cause 38GB+ allocations)
+        t0 = time.time()
         resized_images = [self._resize_image(img) for img in images]
-        print(f"[VLM] Image sizes after resize: {[img.size for img in resized_images]}", flush=True)
+        print(f"[VLM] Image sizes after resize: {[img.size for img in resized_images]} ({time.time()-t0:.1f}s)", flush=True)
         
         # Build conversation with multiple images
         content = []
@@ -74,37 +77,55 @@ class GraniteVisionExtractor:
         
         conversation = [{"role": "user", "content": content}]
         
+        t1 = time.time()
+        print("[VLM] Applying chat template...", flush=True)
         formatted_prompt = self.processor.apply_chat_template(
             conversation,
             add_generation_prompt=True,
         )
+        print(f"[VLM] Chat template done ({time.time()-t1:.1f}s)", flush=True)
         
+        t2 = time.time()
+        print("[VLM] Processing inputs...", flush=True)
         inputs = self.processor(
             images=resized_images,
             text=formatted_prompt,
             return_tensors="pt"
         )
+        print(f"[VLM] Inputs processed ({time.time()-t2:.1f}s)", flush=True)
+        print(f"[VLM] Input shapes: {[(k, v.shape) for k, v in inputs.items()]}", flush=True)
         
         # Move to device with correct dtype
+        t3 = time.time()
+        print("[VLM] Moving to device...", flush=True)
         processed = {}
         for k, v in inputs.items():
             if torch.is_floating_point(v):
                 processed[k] = v.to(self.device, dtype=self.torch_dtype)
             else:
                 processed[k] = v.to(self.device)
+        print(f"[VLM] On device ({time.time()-t3:.1f}s)", flush=True)
         
+        if torch.cuda.is_available():
+            print(f"[VLM] GPU memory before generate: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
+        
+        t4 = time.time()
+        print("[VLM] Starting generation (this may take a while)...", flush=True)
         with torch.no_grad():
             outputs = self.model.generate(
                 **processed,
                 max_new_tokens=self.max_new_tokens,
                 do_sample=False,
             )
+        print(f"[VLM] Generation done ({time.time()-t4:.1f}s)", flush=True)
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
         input_len = processed["input_ids"].shape[1]
-        return self.processor.decode(outputs[0][input_len:], skip_special_tokens=True)
+        response = self.processor.decode(outputs[0][input_len:], skip_special_tokens=True)
+        print(f"[VLM] Response: {response[:100]}..." if len(response) > 100 else f"[VLM] Response: {response}", flush=True)
+        return response
     
     def _parse_values(self, response: str) -> list[int]:
         """Parse values from VLM response."""
