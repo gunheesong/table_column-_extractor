@@ -57,7 +57,7 @@ class GraniteVisionExtractor:
         self.device = next(self.model.parameters()).device
         print(f"[VLM] Model ready on {self.device}", flush=True)
     
-    def _resize_image(self, img: Image.Image, max_size: int = 768) -> Image.Image:
+    def _resize_image(self, img: Image.Image, max_size: int = 1024) -> Image.Image:
         """Resize image to fit within max_size while preserving aspect ratio."""
         if max(img.size) > max_size:
             img = img.copy()
@@ -110,26 +110,50 @@ class GraniteVisionExtractor:
         input_len = processed["input_ids"].shape[1]
         return self.processor.decode(outputs[0][input_len:], skip_special_tokens=True)
     
-    def extract_column_values(
+    def _parse_values(self, response: str) -> list[int]:
+        """Parse values from VLM response."""
+        # Try direct JSON parse
+        try:
+            data = json.loads(response.strip())
+            if "values" in data:
+                return [int(v) for v in data["values"]]
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to find JSON in response
+        json_match = re.search(r'\{[^{}]*"values"\s*:\s*\[[^\]]*\][^{}]*\}', response)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                return [int(v) for v in data["values"]]
+            except (json.JSONDecodeError, ValueError):
+                pass
+        
+        # Try to extract numbers if JSON parsing fails
+        numbers = re.findall(r'-?\d+(?:\.\d+)?', response)
+        if numbers:
+            return [int(float(n)) for n in numbers]
+        
+        return []
+    
+    def extract_column_values_single(
         self,
-        images: list[Image.Image],
+        image: Image.Image,
         table_description: str,
         column_name: str,
     ) -> ColumnValues:
         """
-        Extract numeric values from a specified column in matching tables.
+        Extract numeric values from a single image.
         
         Args:
-            images: List of PIL Images containing tables
+            image: PIL Image containing a table
             table_description: Description of the table to look for
-                               (e.g., "stress vs strain data")
             column_name: Name of the column to extract values from
-                         (e.g., "strain", "y")
             
         Returns:
             ColumnValues with list of integers
         """
-        prompt = f"""You are analyzing table images to extract specific data.
+        prompt = f"""You are analyzing a table image to extract specific data.
 
 TASK:
 1. Find the table that contains "{table_description}"
@@ -137,7 +161,6 @@ TASK:
 3. Extract ALL numeric values from that column
 
 CRITICAL INSTRUCTIONS:
-- Look at ALL provided images
 - The table may have headers like "{column_name}", "y", "{column_name} (units)", etc.
 - Extract ONLY numeric values from the target column
 - If decimals exist, round to integers
@@ -149,29 +172,33 @@ If no matching table or column is found, return: {{"values": []}}
 
 RESPOND WITH ONLY THE JSON OBJECT. NO OTHER TEXT."""
 
-        response = self._generate(images, prompt)
+        response = self._generate([image], prompt)
+        values = self._parse_values(response)
+        return ColumnValues(values=values)
+    
+    def extract_column_values(
+        self,
+        images: list[Image.Image],
+        table_description: str,
+        column_name: str,
+    ) -> list[ColumnValues]:
+        """
+        Extract numeric values from each image separately.
         
-        # Parse JSON from response
-        try:
-            # Try direct parse first
-            data = json.loads(response.strip())
-            if "values" in data:
-                return ColumnValues(values=[int(v) for v in data["values"]])
-        except json.JSONDecodeError:
-            pass
+        Processes images ONE BY ONE to conserve GPU memory.
         
-        # Try to find JSON in response
-        json_match = re.search(r'\{[^{}]*"values"\s*:\s*\[[^\]]*\][^{}]*\}', response)
-        if json_match:
-            try:
-                data = json.loads(json_match.group())
-                return ColumnValues(values=[int(v) for v in data["values"]])
-            except (json.JSONDecodeError, ValueError):
-                pass
-        
-        # Try to extract numbers if JSON parsing fails
-        numbers = re.findall(r'-?\d+(?:\.\d+)?', response)
-        if numbers:
-            return ColumnValues(values=[int(float(n)) for n in numbers])
-        
-        return ColumnValues(values=[])
+        Args:
+            images: List of PIL Images containing tables
+            table_description: Description of the table to look for
+            column_name: Name of the column to extract values from
+            
+        Returns:
+            List of ColumnValues, one per image
+        """
+        results = []
+        for i, img in enumerate(images):
+            print(f"[VLM] Processing image {i+1}/{len(images)}...", flush=True)
+            result = self.extract_column_values_single(img, table_description, column_name)
+            print(f"[VLM] Found {len(result.values)} values", flush=True)
+            results.append(result)
+        return results

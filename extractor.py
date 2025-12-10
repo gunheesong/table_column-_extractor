@@ -17,7 +17,7 @@ import torch
 from .pdf_utils import extract_tables_from_pdf, page_to_image, get_all_pdfs, TableInfo
 from .embeddings import TextEmbedder, compute_similarity
 from .vision_model import GraniteVisionExtractor
-from .models import ExtractionResponse
+from .models import ExtractionResponse, PageResult
 
 
 def _clear_gpu_memory():
@@ -135,11 +135,12 @@ class TableColumnExtractor:
                 "page": table.page_num,
             })
         
-        # Step 4: Load VLM, extract column values, then unload
+        # Step 4: Load VLM, extract column values (one image at a time), then unload
         print("Loading Granite Vision VLM...")
         vision_extractor = GraniteVisionExtractor(self.granite_vision_path)
         
-        result = vision_extractor.extract_column_values(
+        # Process each image separately (constant memory usage)
+        extraction_results = vision_extractor.extract_column_values(
             images,
             table_description=table_description,
             column_name=column_name,
@@ -150,9 +151,17 @@ class TableColumnExtractor:
         _clear_gpu_memory()
         print("Granite Vision VLM unloaded.")
         
+        # Build per-page results
+        results = []
+        for info, col_values in zip(page_info, extraction_results):
+            results.append(PageResult(
+                pdf=info["pdf"],
+                page=info["page"],
+                values=col_values.values,
+            ))
+        
         return ExtractionResponse(
             table_description=table_description,
             column_name=column_name,
-            values=result.values,
-            source_pages=page_info,
+            results=results,
         )

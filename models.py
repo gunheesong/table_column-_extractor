@@ -10,6 +10,13 @@ class ColumnValues(BaseModel):
     values: list[int]
 
 
+class PageResult(BaseModel):
+    """Result from a single page."""
+    pdf: str
+    page: int
+    values: list[int]
+
+
 class ExtractionRequest(BaseModel):
     """Request to extract column values from PDFs."""
     table_description: str  # Description of the table to find (e.g., "stress vs strain data")
@@ -18,8 +25,7 @@ class ExtractionRequest(BaseModel):
     
 
 class ExtractionResponse(BaseModel):
-    """Response containing extracted column values."""
+    """Response containing extracted column values per page."""
     table_description: str
     column_name: str
-    values: list[int]
-    source_pages: list[dict]  # Info about which pages the values came from
+    results: list[PageResult]  # Results per page, displayed separately
