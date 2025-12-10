@@ -40,17 +40,31 @@ def extract_tables_from_pdf(pdf_path: str | Path) -> list[TableInfo]:
         page = doc[page_num]
         
         try:
+            # Get text blocks for context extraction
+            text_blocks = page.get_text("dict")["blocks"]
+            
             table_finder = page.find_tables()
             
             for table in table_finder.tables:
-                # Extract text content as markdown
-                text_content = _table_to_markdown(table)
+                table_bbox = table.bbox
+                
+                # Get context above the table (caption + section heading)
+                context = _get_text_above_table(text_blocks, table_bbox)
+                
+                # Extract table content as markdown
+                table_markdown = _table_to_markdown(table)
+                
+                # Combine: context + table
+                if context:
+                    text_content = f"{context}\n{table_markdown}"
+                else:
+                    text_content = table_markdown
                 
                 if text_content.strip():
                     tables.append(TableInfo(
                         pdf_path=str(pdf_path),
                         page_num=page_num,
-                        bbox=table.bbox,
+                        bbox=table_bbox,
                         text_content=text_content,
                     ))
         except Exception:
@@ -58,6 +72,47 @@ def extract_tables_from_pdf(pdf_path: str | Path) -> list[TableInfo]:
     
     doc.close()
     return tables
+
+
+def _get_text_above_table(text_blocks: list, table_bbox: tuple, max_distance: float = 100) -> str:
+    """
+    Get text above the table (likely caption and/or section heading).
+    
+    Args:
+        text_blocks: List of text blocks from page.get_text("dict")
+        table_bbox: Table bounding box (x0, y0, x1, y1)
+        max_distance: Maximum pixels above table to search
+        
+    Returns:
+        Combined text found above the table
+    """
+    table_top = table_bbox[1]
+    
+    # Collect text blocks above the table
+    above_texts = []
+    
+    for block in text_blocks:
+        if block.get("type") != 0:  # Skip non-text blocks
+            continue
+        
+        block_bbox = block.get("bbox", (0, 0, 0, 0))
+        block_bottom = block_bbox[3]
+        
+        # Check if block is above table and within max_distance
+        if block_bottom <= table_top and (table_top - block_bottom) < max_distance:
+            # Extract text from block
+            text = ""
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text += span.get("text", "") + " "
+            
+            text = text.strip()
+            if text:
+                above_texts.append((block_bottom, text))  # Store with y-position
+    
+    # Sort by y-position (top to bottom) and combine
+    above_texts.sort(key=lambda x: x[0])
+    return "\n".join([t[1] for t in above_texts])
 
 
 def _table_to_markdown(table) -> str:
