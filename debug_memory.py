@@ -72,10 +72,44 @@ try:
         model = model.cuda()
         print(f"GPU memory after .cuda(): {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
     
-    print("✓ VLM OK\n")
+    device = next(model.parameters()).device
+    print("✓ VLM loaded OK\n")
+    
+    # Test inference with a small image
+    print("="*60)
+    print("STEP 3: Testing VLM Inference")
+    print("="*60)
+    
+    from PIL import Image
+    
+    # Create a small test image (224x224)
+    test_img = Image.new('RGB', (224, 224), color='white')
+    print(f"Test image size: {test_img.size}")
+    
+    # Process
+    print("Processing image...", flush=True)
+    inputs = processor(images=test_img, text="What is in this image?", return_tensors="pt")
+    print(f"Input shapes: {[(k, v.shape) for k, v in inputs.items()]}", flush=True)
+    
+    # Move to device
+    processed = {}
+    for k, v in inputs.items():
+        if torch.is_floating_point(v):
+            processed[k] = v.to(device, dtype=torch.bfloat16)
+        else:
+            processed[k] = v.to(device)
+    
+    print(f"GPU memory before inference: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
+    
+    print("Running inference...", flush=True)
+    with torch.no_grad():
+        outputs = model.generate(**processed, max_new_tokens=10)
+    
+    print(f"GPU memory after inference: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
+    print("✓ VLM inference OK\n")
     
 except Exception as e:
-    print(f"✗ VLM FAILED: {e}\n")
+    print(f"✗ FAILED: {e}\n")
     import traceback
     traceback.print_exc()
 
