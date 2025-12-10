@@ -86,9 +86,24 @@ try:
     test_img = Image.new('RGB', (224, 224), color='white')
     print(f"Test image size: {test_img.size}")
     
+    # Use proper chat template format for Granite Vision
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": test_img},
+                {"type": "text", "text": "What is in this image?"}
+            ]
+        }
+    ]
+    
+    print("Applying chat template...", flush=True)
+    formatted_prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+    print(f"Prompt length: {len(formatted_prompt)} chars", flush=True)
+    
     # Process
     print("Processing image...", flush=True)
-    inputs = processor(images=test_img, text="What is in this image?", return_tensors="pt")
+    inputs = processor(images=[test_img], text=formatted_prompt, return_tensors="pt")
     print(f"Input shapes: {[(k, v.shape) for k, v in inputs.items()]}", flush=True)
     
     # Move to device
