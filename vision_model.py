@@ -24,7 +24,7 @@ class GraniteVisionExtractor:
         self,
         model_path: str,
         torch_dtype: torch.dtype = torch.bfloat16,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 128,  # Reduced - JSON output only needs ~50 tokens
     ):
         """
         Initialize Granite Vision model.
@@ -53,8 +53,14 @@ class GraniteVisionExtractor:
             print(f"[VLM] GPU memory used: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
         print(f"[VLM] Model ready on {self.device}", flush=True)
     
-    def _resize_image(self, img: Image.Image, max_size: int = 1024) -> Image.Image:
-        """Resize image to fit within max_size while preserving aspect ratio."""
+    def _resize_image(self, img: Image.Image, max_size: int = 384) -> Image.Image:
+        """Resize image to fit within max_size while preserving aspect ratio.
+        
+        Token count scales with image size:
+        - 768px → ~6000 tokens (very slow)
+        - 512px → ~2700 tokens (slow)
+        - 384px → ~1500 tokens (reasonable)
+        """
         if max(img.size) > max_size:
             img = img.copy()
             img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
@@ -110,14 +116,20 @@ class GraniteVisionExtractor:
             print(f"[VLM] GPU memory before generate: {torch.cuda.memory_allocated() / 1e9:.2f} GB", flush=True)
         
         t4 = time.time()
-        print("[VLM] Starting generation (this may take a while)...", flush=True)
+        print(f"[VLM] Starting generation (max {self.max_new_tokens} tokens)...", flush=True)
+        
+        # Use streamer to show progress
+        from transformers import TextStreamer
+        streamer = TextStreamer(self.processor, skip_prompt=True)
+        
         with torch.no_grad():
             outputs = self.model.generate(
                 **processed,
                 max_new_tokens=self.max_new_tokens,
                 do_sample=False,
+                streamer=streamer,
             )
-        print(f"[VLM] Generation done ({time.time()-t4:.1f}s)", flush=True)
+        print(f"\n[VLM] Generation done ({time.time()-t4:.1f}s)", flush=True)
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
