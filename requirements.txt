@@ -7,4 +7,5 @@ llama-index-core>=0.10
 llama-index-embeddings-huggingface
 sentence-transformers>=2.2.0
 Pillow
+chromadb
 
